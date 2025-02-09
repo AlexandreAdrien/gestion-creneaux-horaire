@@ -58,8 +58,7 @@ app.listen(port, () => {
 console.log(`Server running on port ${port}`);
 });
 // Ajouter cette partie à votre fichier `index.js`
-// Route pour suggérer les trois premiers créneaux dispo
-nibles
+// Route pour suggérer les trois premiers créneaux disponibles
 app.post('/suggest-slots', (req, res) => {
 const { free_slots } = req.body;
 // Vérifier que les créneaux libres sont bien fournis
