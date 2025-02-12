@@ -18,10 +18,12 @@ app.post('/occupied-slots', (req, res) => {
     return res.status(400).json({ message: "Invalid input, 'value' is required and should contain slots." });
   }
 
-  // Récupérer la date à partir du premier créneau pour la plage horaire de travail
-  const date = occupiedSlots[0].start.split("T")[0];
-  const workDayStart = new Date(`${date}T${WORKDAY_START}Z`);
-  const workDayEnd = new Date(`${date}T${WORKDAY_END}Z`);
+// On récupère l'heure exacte du premier slot pour commencer :
+const firstSlot = new Date(occupiedSlots[0].start); // par ex. 2025-02-21T19:00:00
+const workDayStart = new Date(firstSlot);           // on copie la même date/heure
+// éventuellement, on définit workDayEnd = + X heures, si besoin
+const workDayEnd   = new Date(firstSlot.getTime() + (8 * 60 * 60 * 1000)); 
+
 
   // Trier les créneaux occupés par ordre croissant de début
   const sortedOccupiedSlots = occupiedSlots
