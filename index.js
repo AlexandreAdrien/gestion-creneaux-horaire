@@ -6,9 +6,11 @@ const port = process.env.PORT || 10000;
 // Middleware pour parser le JSON dans les requêtes
 app.use(express.json());
 
-// Définir la plage horaire d'ouverture
-const WORKDAY_START = "08:00:00";
-const WORKDAY_END = "16:00:00";
+// Récupère juste la partie date, en local
+const dateOnly = occupiedSlots[0].start.split("T")[0];
+// Pas de "Z" => on veut la timezone locale du serveur, ou on gère un offset nous-mêmes
+const workDayStart = new Date(`${dateOnly}T08:00:00`); 
+const workDayEnd   = new Date(`${dateOnly}T16:00:00`);
 
 // Route pour identifier les créneaux libres
 app.post('/occupied-slots', (req, res) => {
