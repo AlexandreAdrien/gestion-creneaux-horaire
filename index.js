@@ -6,12 +6,6 @@ const port = process.env.PORT || 10000;
 // Middleware pour parser le JSON dans les requêtes
 app.use(express.json());
 
-// Récupère juste la partie date, en local
-const dateOnly = occupiedSlots[0].start.split("T")[0];
-// Pas de "Z" => on veut la timezone locale du serveur, ou on gère un offset nous-mêmes
-const workDayStart = new Date(`${dateOnly}T08:00:00`); 
-const workDayEnd   = new Date(`${dateOnly}T16:00:00`);
-
 // Route pour identifier les créneaux libres
 app.post('/occupied-slots', (req, res) => {
   const { value: occupiedSlots } = req.body;
@@ -24,7 +18,7 @@ app.post('/occupied-slots', (req, res) => {
 const firstSlot = new Date(occupiedSlots[0].start); // par ex. 2025-02-21T19:00:00
 const workDayStart = new Date(firstSlot);           // on copie la même date/heure
 // éventuellement, on définit workDayEnd = + X heures, si besoin
-const workDayEnd   = new Date(firstSlot.getTime() + (8 * 60 * 60 * 1000)); 
+const workDayEnd   = new Date(firstSlot.getTime() + (1 * 60 * 60 * 1000)); 
 
 
   // Trier les créneaux occupés par ordre croissant de début
