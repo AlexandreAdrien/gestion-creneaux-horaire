@@ -8,36 +8,41 @@ app.use(express.json());
 
 // Route pour identifier les créneaux libres
 app.post('/occupied-slots', (req, res) => {
-  // On récupère 'startHour' et 'endHour' depuis le body,
-  // en plus de 'value' (occupiedSlots).
-  const { value: occupiedSlots, startHour, endHour } = req.body;
+  const { value: occupiedSlots } = req.body;
 
-  // Vérifier que les slots sont bien envoyés
+  // startHour et endHour peuvent être envoyés en string,
+  // donc on les parse pour éviter l'erreur "must be numbers".
+  let { startHour, endHour } = req.body;
+
+  // Vérifier qu'on a au moins des slots
   if (!occupiedSlots || occupiedSlots.length === 0) {
     return res.status(400).json({
       message: "Invalid input, 'value' is required and should contain slots."
     });
   }
 
-  // Vérifier que 'startHour' et 'endHour' sont bien spécifiés
-  // et qu'ils sont de type numérique (heures entières)
-  if (typeof startHour !== 'number' || typeof endHour !== 'number') {
+  // Convertir startHour/endHour en nombre (si c'est déjà un nombre, parseInt marche quand même)
+  startHour = parseInt(startHour, 10);
+  endHour   = parseInt(endHour, 10);
+
+  // Vérifier qu'ils sont valides
+  if (isNaN(startHour) || isNaN(endHour)) {
     return res.status(400).json({
-      message: "Invalid input, 'startHour' and 'endHour' must be numbers."
+      message: "Invalid input, 'startHour' and 'endHour' must be valid integers."
     });
   }
 
-  // On récupère la date (année, mois, jour) du premier slot
+  // Récupérer la date (année/mois/jour) du premier slot
   const firstSlot = new Date(occupiedSlots[0].start); // ex. "2025-02-21T19:00:00Z"
-  const year = firstSlot.getFullYear();
+  const year  = firstSlot.getFullYear();
   const month = firstSlot.getMonth();
-  const day = firstSlot.getDate();
+  const day   = firstSlot.getDate();
 
-  // Définir la plage dynamique en se basant sur startHour et endHour
+  // Définir la plage de travail dynamique
   const workDayStart = new Date(year, month, day, startHour, 0, 0);
-  const workDayEnd = new Date(year, month, day, endHour, 0, 0);
+  const workDayEnd   = new Date(year, month, day, endHour, 0, 0);
 
-  // Trier les créneaux occupés par ordre croissant de début
+  // Trier les créneaux occupés par ordre de début
   const sortedOccupiedSlots = occupiedSlots
     .map(slot => ({
       start: new Date(slot.start),
@@ -45,7 +50,7 @@ app.post('/occupied-slots', (req, res) => {
     }))
     .sort((a, b) => a.start - b.start);
 
-  // Parcourir les slots occupés pour identifier les créneaux libres
+  // Identifier les créneaux libres
   let freeSlots = [];
   let currentTime = workDayStart;
 
@@ -61,7 +66,7 @@ app.post('/occupied-slots', (req, res) => {
     }
   }
 
-  // Vérifier s'il reste un créneau libre à la fin
+  // S'il reste un créneau après le dernier slot occupé
   if (currentTime < workDayEnd) {
     freeSlots.push({
       start: currentTime.toISOString(),
@@ -69,18 +74,14 @@ app.post('/occupied-slots', (req, res) => {
     });
   }
 
-  // Si aucun créneau libre, retourner "0"
+  // Si aucun créneau libre, renvoyer "0"
   if (freeSlots.length === 0) {
     return res.status(200).json({ free_slots: "0" });
   }
 
-  // Sinon, on retourne le tableau des créneaux libres
+  // Sinon, renvoyer les créneaux libres
   res.status(200).json({ free_slots: freeSlots });
 });
-
-// ----------------------------------------------------
-// Les autres routes restent inchangées
-// ----------------------------------------------------
 
 // Route pour suggérer les trois premiers créneaux disponibles
 app.post('/suggest-slots', (req, res) => {
@@ -116,16 +117,16 @@ app.post('/extend-slots', (req, res) => {
   // Étendre de +1 jour
   requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
 
-  // Si on tombe un samedi ou dimanche, avancer jusqu'au lundi
+  // Si J+1 tombe un samedi ou dimanche, avancer jusqu'au lundi
   while (requestedDate.getUTCDay() === 6 || requestedDate.getUTCDay() === 0) {
     requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
   }
 
-  const year = requestedDate.getUTCFullYear();
+  const year  = requestedDate.getUTCFullYear();
   const month = String(requestedDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(requestedDate.getUTCDate()).padStart(2, '0');
+  const day   = String(requestedDate.getUTCDate()).padStart(2, '0');
   const start = `${year}-${month}-${day}T08:00:00Z`;
-  const end = `${year}-${month}-${day}T16:00:00Z`;
+  const end   = `${year}-${month}-${day}T16:00:00Z`;
 
   res.status(200).json({ start, end });
 });
@@ -144,16 +145,16 @@ app.post('/answer', (req, res) => {
 
   suggested_slots.forEach((slot, index) => {
     const startDate = new Date(slot.start);
-    const endDate = new Date(slot.end);
+    const endDate   = new Date(slot.end);
 
-    // Convertir les heures de UTC à UTC+1
+    // Convertir de UTC à UTC+1 (1 h)
     const startUTCPlus1 = new Date(startDate.getTime() + 60 * 60 * 1000);
-    const endUTCPlus1 = new Date(endDate.getTime() + 60 * 60 * 1000);
+    const endUTCPlus1   = new Date(endDate.getTime() + 60 * 60 * 1000);
 
-    const day = String(startUTCPlus1.getUTCDate()).padStart(2, '0');
-    const month = startUTCPlus1.toLocaleString('fr-FR', { month: 'long' });
+    const day       = String(startUTCPlus1.getUTCDate()).padStart(2, '0');
+    const month     = startUTCPlus1.toLocaleString('fr-FR', { month: 'long' });
     const startHour = startUTCPlus1.getUTCHours();
-    const endHour = endUTCPlus1.getUTCHours();
+    const endHour   = endUTCPlus1.getUTCHours();
 
     if (index === 0) {
       responseText += `le ${day} ${month} de ${startHour} heures à ${endHour} heures`;
