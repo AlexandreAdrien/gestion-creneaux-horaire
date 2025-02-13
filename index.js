@@ -8,18 +8,34 @@ app.use(express.json());
 
 // Route pour identifier les créneaux libres
 app.post('/occupied-slots', (req, res) => {
-  const { value: occupiedSlots } = req.body;
-  
+  // On récupère 'startHour' et 'endHour' depuis le body,
+  // en plus de 'value' (occupiedSlots).
+  const { value: occupiedSlots, startHour, endHour } = req.body;
+
+  // Vérifier que les slots sont bien envoyés
   if (!occupiedSlots || occupiedSlots.length === 0) {
-    return res.status(400).json({ message: "Invalid input, 'value' is required and should contain slots." });
+    return res.status(400).json({
+      message: "Invalid input, 'value' is required and should contain slots."
+    });
   }
 
-// On récupère l'heure exacte du premier slot pour commencer :
-const firstSlot = new Date(occupiedSlots[0].start); // par ex. 2025-02-21T19:00:00
-const workDayStart = new Date(firstSlot);           // on copie la même date/heure
-// éventuellement, on définit workDayEnd = + X heures, si besoin
-const workDayEnd   = new Date(firstSlot.getTime() + (1 * 60 * 60 * 1000)); 
+  // Vérifier que 'startHour' et 'endHour' sont bien spécifiés
+  // et qu'ils sont de type numérique (heures entières)
+  if (typeof startHour !== 'number' || typeof endHour !== 'number') {
+    return res.status(400).json({
+      message: "Invalid input, 'startHour' and 'endHour' must be numbers."
+    });
+  }
 
+  // On récupère la date (année, mois, jour) du premier slot
+  const firstSlot = new Date(occupiedSlots[0].start); // ex. 2025-02-21T19:00:00Z
+  const year  = firstSlot.getFullYear();
+  const month = firstSlot.getMonth();
+  const day   = firstSlot.getDate();
+
+  // Définir la plage dynamique en se basant sur startHour et endHour
+  const workDayStart = new Date(year, month, day, startHour, 0, 0);
+  const workDayEnd   = new Date(year, month, day, endHour, 0, 0);
 
   // Trier les créneaux occupés par ordre croissant de début
   const sortedOccupiedSlots = occupiedSlots
@@ -29,11 +45,10 @@ const workDayEnd   = new Date(firstSlot.getTime() + (1 * 60 * 60 * 1000));
     }))
     .sort((a, b) => a.start - b.start);
 
-  // Initialiser les créneaux libres
+  // Parcourir les slots occupés pour identifier les créneaux libres
   let freeSlots = [];
   let currentTime = workDayStart;
 
-  // Identifier les créneaux libres
   for (const slot of sortedOccupiedSlots) {
     if (currentTime < slot.start) {
       freeSlots.push({
@@ -41,10 +56,12 @@ const workDayEnd   = new Date(firstSlot.getTime() + (1 * 60 * 60 * 1000));
         end: slot.start.toISOString(),
       });
     }
-    currentTime = slot.end > currentTime ? slot.end : currentTime;
+    if (slot.end > currentTime) {
+      currentTime = slot.end;
+    }
   }
 
-  // Vérifier s'il y a un créneau libre après le dernier créneau occupé
+  // Vérifier s'il reste un créneau libre à la fin
   if (currentTime < workDayEnd) {
     freeSlots.push({
       start: currentTime.toISOString(),
@@ -52,101 +69,81 @@ const workDayEnd   = new Date(firstSlot.getTime() + (1 * 60 * 60 * 1000));
     });
   }
 
-  // Si aucun créneau n'est libre, retourner "0"
+  // Si aucun créneau libre, retourner "0"
   if (freeSlots.length === 0) {
     return res.status(200).json({ free_slots: "0" });
   }
 
-  // Retourner les créneaux libres avec la date complète
+  // Sinon, on retourne le tableau des créneaux libres
   res.status(200).json({ free_slots: freeSlots });
 });
+
+// ----------------------------------------------------
+// Les autres routes restent inchangées
+// ----------------------------------------------------
 
 // Route pour suggérer les trois premiers créneaux disponibles
 app.post('/suggest-slots', (req, res) => {
   const { free_slots } = req.body;
-
-  // Vérifier que les créneaux libres sont bien fournis
   if (!free_slots || !Array.isArray(free_slots) || free_slots.length === 0) {
-    return res.status(400).json({ message: "Invalid input, 'free_slots' is required and should contain an array of slots." });
+    return res.status(400).json({
+      message: "Invalid input, 'free_slots' is required and should contain an array of slots."
+    });
   }
-
-  // Extraire les trois premiers créneaux disponibles
   const suggestedSlots = free_slots.slice(0, 3);
-
-  // Retourner les créneaux suggérés
   res.status(200).json({ suggested_slots: suggestedSlots });
 });
 
 // Route pour étendre le créneau de +1 jour, en sautant le week-end
 app.post('/extend-slots', (req, res) => {
   const { requested_datetime } = req.body;
-
-  // Vérifier que la date/heure souhaitée est bien fournie
   if (!requested_datetime) {
-    return res.status(400).json({ message: "Invalid input, 'requested_datetime' is required." });
+    return res.status(400).json({
+      message: "Invalid input, 'requested_datetime' is required."
+    });
   }
-
-  // Traiter la date souhaitée sans fuseau horaire (en ajoutant 'Z' pour indiquer UTC)
   let requestedDate = new Date(`${requested_datetime}Z`);
   if (isNaN(requestedDate.getTime())) {
-    return res.status(400).json({ message: "Invalid input, 'requested_datetime' must be a valid ISO date without timezone." });
+    return res.status(400).json({
+      message: "Invalid input, 'requested_datetime' must be a valid ISO date without timezone."
+    });
   }
-
-  // Étendre de +1 jour
   requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
-
-  // Si J+1 tombe un samedi (6) ou un dimanche (0), avancer jusqu'au lundi
   while (requestedDate.getUTCDay() === 6 || requestedDate.getUTCDay() === 0) {
     requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
   }
-
-  // Construire les créneaux d'ouverture (08:00 à 16:00) pour la nouvelle date
-  const year = requestedDate.getUTCFullYear();
+  const year  = requestedDate.getUTCFullYear();
   const month = String(requestedDate.getUTCMonth() + 1).padStart(2, '0');
-  const day = String(requestedDate.getUTCDate()).padStart(2, '0');
+  const day   = String(requestedDate.getUTCDate()).padStart(2, '0');
   const start = `${year}-${month}-${day}T08:00:00Z`;
-  const end = `${year}-${month}-${day}T16:00:00Z`;
-
-  // Retourner le créneau étendu
+  const end   = `${year}-${month}-${day}T16:00:00Z`;
   res.status(200).json({ start, end });
 });
 
 // Route pour convertir les créneaux en UTC+1 et générer une phrase en français
 app.post('/answer', (req, res) => {
   const { suggested_slots } = req.body;
-
-  // Vérifier que les créneaux sont bien fournis
   if (!suggested_slots || !Array.isArray(suggested_slots) || suggested_slots.length === 0) {
-    return res.status(400).json({ message: "Invalid input, 'suggested_slots' is required and should contain an array of slots." });
+    return res.status(400).json({
+      message: "Invalid input, 'suggested_slots' is required and should contain an array of slots."
+    });
   }
-
-  // Initialiser une chaîne pour construire la réponse en français
   let responseText = '';
-
-  // Parcourir chaque créneau, le convertir en UTC+1, et formater la phrase
   suggested_slots.forEach((slot, index) => {
     const startDate = new Date(slot.start);
-    const endDate = new Date(slot.end);
-
-    // Convertir les heures de UTC à UTC+1
+    const endDate   = new Date(slot.end);
     const startUTCPlus1 = new Date(startDate.getTime() + 60 * 60 * 1000);
-    const endUTCPlus1 = new Date(endDate.getTime() + 60 * 60 * 1000);
-
-    // Extraire les informations nécessaires pour la phrase
-    const day = String(startUTCPlus1.getUTCDate()).padStart(2, '0');
-    const month = startUTCPlus1.toLocaleString('fr-FR', { month: 'long' });
+    const endUTCPlus1   = new Date(endDate.getTime() + 60 * 60 * 1000);
+    const day       = String(startUTCPlus1.getUTCDate()).padStart(2, '0');
+    const month     = startUTCPlus1.toLocaleString('fr-FR', { month: 'long' });
     const startHour = startUTCPlus1.getUTCHours();
-    const endHour = endUTCPlus1.getUTCHours();
-
-    // Construire la phrase en français
+    const endHour   = endUTCPlus1.getUTCHours();
     if (index === 0) {
       responseText += `le ${day} ${month} de ${startHour} heures à ${endHour} heures`;
     } else {
       responseText += ` et de ${startHour} heures à ${endHour} heures`;
     }
   });
-
-  // Retourner la phrase générée
   res.status(200).send(responseText);
 });
 
