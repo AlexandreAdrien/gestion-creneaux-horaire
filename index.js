@@ -2,73 +2,56 @@ const express = require('express');
 const app = express();
 const port = process.env.PORT || 10000;
 
-// Middleware pour parser le JSON dans les requêtes
 app.use(express.json());
 
 // Route pour identifier les créneaux libres
 app.post('/occupied-slots', (req, res) => {
-  // On récupère :
-  //  - un tableau "value" de slots occupés (optionnel si on fournit requested_datetime)
-  //  - un "requested_datetime" (optionnel si on fournit déjà des slots)
-  //  - la plage horaire (startHour / endHour) (optionnelle, sinon on la calcule)
   let { value: occupiedSlots, requested_datetime, startHour, endHour } = req.body;
 
-  // On convertit (si présents) startHour / endHour en nombre
+  // On convertit startHour / endHour si fournis
   let parsedStartHour = parseInt(startHour, 10);
   let parsedEndHour   = parseInt(endHour, 10);
 
-  // Cas 1 : l'utilisateur fournit "requested_datetime"
+  // 1) Si l'utilisateur fournit un requested_datetime, on déduit juste le jour
+  let requestedDateObj = null;
   if (requested_datetime) {
-    // On parse la date demandée
-    const requestedDateObj = new Date(requested_datetime + 'Z');
+    requestedDateObj = new Date(requested_datetime + 'Z');
     if (isNaN(requestedDateObj.getTime())) {
       return res.status(400).json({
-        message: "Invalid input, 'requested_datetime' must be une date ISO valide (ex: 2025-02-21T19:00:00)."
-      });
-    }
-
-    // Si l'utilisateur n'a pas spécifié startHour/endHour,
-    // on les calcule automatiquement : (heure demandée) → (heure demandée +1)
-    if (isNaN(parsedStartHour)) {
-      parsedStartHour = requestedDateObj.getUTCHours(); // ex. 19 si 19h en UTC
-    }
-    if (isNaN(parsedEndHour)) {
-      parsedEndHour = parsedStartHour + 1; // par défaut, +1 heure
-    }
-
-    // Si "value" (occupiedSlots) est vide ou inexistant,
-    // on crée un faux slot (même heure début/fin) juste pour récupérer la date
-    if (!occupiedSlots || occupiedSlots.length === 0) {
-      occupiedSlots = [{
-        start: requestedDateObj.toISOString(),
-        end:   requestedDateObj.toISOString()
-      }];
-    }
-
-  // Cas 2 : pas de requested_datetime => on attend un vrai tableau "value"
-  } else {
-    // On vérifie que startHour / endHour sont bien valides
-    if (isNaN(parsedStartHour) || isNaN(parsedEndHour)) {
-      return res.status(400).json({
-        message: "Invalid input, 'startHour' et 'endHour' doivent être fournis ou alors 'requested_datetime'."
-      });
-    }
-    if (!occupiedSlots || occupiedSlots.length === 0) {
-      return res.status(400).json({
-        message: "Invalid input, 'value' (slots) ne peut pas être vide si pas de 'requested_datetime'."
+        message: "Invalid input, 'requested_datetime' must be ISO (ex: 2025-02-17T09:00:00)."
       });
     }
   }
 
-  // À ce stade, on a forcément un tableau occupiedSlots et des heures start/end
-  startHour = parsedStartHour;
-  endHour   = parsedEndHour;
+  // 2) Par défaut, la plage est 8h–19h si l'utilisateur ne l'a pas précisée
+  if (isNaN(parsedStartHour)) {
+    parsedStartHour = 8;
+  }
+  if (isNaN(parsedEndHour)) {
+    parsedEndHour = 19;
+  }
 
-  // Récupérer l'année, mois, jour depuis le 1er slot
+  // 3) Si on n'a pas de 'value' non vide,
+  //    on crée un faux slot pour récupérer la date (année, mois, jour)
+  //    soit depuis requested_datetime, soit on bloque si on n'a rien
+  if (!occupiedSlots || occupiedSlots.length === 0) {
+    if (!requestedDateObj) {
+      return res.status(400).json({
+        message: "Invalid input, provide either 'requested_datetime' or a non-empty 'value'."
+      });
+    }
+    // Faux slot à la date demandée (0 min de durée)
+    occupiedSlots = [{
+      start: requestedDateObj.toISOString(),
+      end:   requestedDateObj.toISOString()
+    }];
+  }
+
+  // 4) On calcule l'année, mois, jour à partir du premier slot
   const firstSlot = new Date(occupiedSlots[0].start);
   if (isNaN(firstSlot.getTime())) {
     return res.status(400).json({
-      message: "Invalid date dans 'value[0].start' ou 'requested_datetime'."
+      message: "Invalid date in 'value[0].start' or 'requested_datetime'."
     });
   }
 
@@ -76,11 +59,11 @@ app.post('/occupied-slots', (req, res) => {
   const month = firstSlot.getMonth();
   const day   = firstSlot.getDate();
 
-  // Créer la plage de travail [startHour → endHour] pour ce jour
-  const workDayStart = new Date(year, month, day, startHour, 0, 0);
-  const workDayEnd   = new Date(year, month, day, endHour, 0, 0);
+  // 5) Construire la plage 8h–19h (ou autre) de la journée
+  const workDayStart = new Date(year, month, day, parsedStartHour, 0, 0);
+  const workDayEnd   = new Date(year, month, day, parsedEndHour, 0, 0);
 
-  // Trier les créneaux occupés par ordre de début
+  // 6) Trier les slots occupés par ordre de début
   const sortedOccupiedSlots = occupiedSlots
     .map(slot => ({
       start: new Date(slot.start),
@@ -88,7 +71,7 @@ app.post('/occupied-slots', (req, res) => {
     }))
     .sort((a, b) => a.start - b.start);
 
-  // Identifier les créneaux libres
+  // 7) Trouver les créneaux libres
   let freeSlots = [];
   let currentTime = workDayStart;
 
@@ -104,7 +87,7 @@ app.post('/occupied-slots', (req, res) => {
     }
   }
 
-  // S'il reste un créneau après le dernier slot occupé
+  // S'il reste du temps après le dernier slot occupé
   if (currentTime < workDayEnd) {
     freeSlots.push({
       start: currentTime.toISOString(),
@@ -112,99 +95,14 @@ app.post('/occupied-slots', (req, res) => {
     });
   }
 
-  // Si aucun créneau libre, renvoyer "0"
+  // 8) Si aucun créneau libre, on renvoie "0"
   if (freeSlots.length === 0) {
     return res.status(200).json({ free_slots: "0" });
   }
 
-  // Sinon, renvoyer les créneaux libres
   res.status(200).json({ free_slots: freeSlots });
 });
 
-// Route pour suggérer les trois premiers créneaux disponibles
-app.post('/suggest-slots', (req, res) => {
-  const { free_slots } = req.body;
-
-  if (!free_slots || !Array.isArray(free_slots) || free_slots.length === 0) {
-    return res.status(400).json({
-      message: "Invalid input, 'free_slots' is required and should contain an array of slots."
-    });
-  }
-
-  const suggestedSlots = free_slots.slice(0, 3);
-  res.status(200).json({ suggested_slots: suggestedSlots });
-});
-
-// Route pour étendre le créneau de +1 jour, en sautant le week-end
-app.post('/extend-slots', (req, res) => {
-  const { requested_datetime } = req.body;
-
-  if (!requested_datetime) {
-    return res.status(400).json({
-      message: "Invalid input, 'requested_datetime' is required."
-    });
-  }
-
-  let requestedDate = new Date(`${requested_datetime}Z`);
-  if (isNaN(requestedDate.getTime())) {
-    return res.status(400).json({
-      message: "Invalid input, 'requested_datetime' must be a valid ISO date (ex: 2025-02-21T19:00:00)."
-    });
-  }
-
-  // Étendre de +1 jour
-  requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
-
-  // Si J+1 tombe un samedi ou dimanche, avancer jusqu'au lundi
-  while (requestedDate.getUTCHours() === 6 || requestedDate.getUTCHours() === 0) {
-    requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
-  }
-
-  const year  = requestedDate.getUTCFullYear();
-  const month = String(requestedDate.getUTCMonth() + 1).padStart(2, '0');
-  const day   = String(requestedDate.getUTCDate()).padStart(2, '0');
-  const start = `${year}-${month}-${day}T08:00:00Z`;
-  const end   = `${year}-${month}-${day}T16:00:00Z`;
-
-  res.status(200).json({ start, end });
-});
-
-// Route pour convertir les créneaux en UTC+1 et générer une phrase en français
-app.post('/answer', (req, res) => {
-  const { suggested_slots } = req.body;
-
-  if (!suggested_slots || !Array.isArray(suggested_slots) || suggested_slots.length === 0) {
-    return res.status(400).json({
-      message: "Invalid input, 'suggested_slots' is required and should contain an array of slots."
-    });
-  }
-
-  let responseText = '';
-
-  suggested_slots.forEach((slot, index) => {
-    const startDate = new Date(slot.start);
-    const endDate   = new Date(slot.end);
-
-    // Convertir de UTC à UTC+1 (1h)
-    const startUTCPlus1 = new Date(startDate.getTime() + 60 * 60 * 1000);
-    const endUTCPlus1   = new Date(endDate.getTime() + 60 * 60 * 1000);
-
-    const day       = String(startUTCPlus1.getUTCDate()).padStart(2, '0');
-    const month     = startUTCPlus1.toLocaleString('fr-FR', { month: 'long' });
-    const startHour = startUTCPlus1.getUTCHours();
-    const endHour   = endUTCPlus1.getUTCHours();
-
-    if (index === 0) {
-      responseText += `le ${day} ${month} de ${startHour} heures à ${endHour} heures`;
-    } else {
-      responseText += ` et de ${startHour} heures à ${endHour} heures`;
-    }
-  });
-
-  res.status(200).send(responseText);
-});
-
-// Démarrer le serveur
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
 });
