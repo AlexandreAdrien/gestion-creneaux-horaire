@@ -64,11 +64,13 @@ app.post('/occupied-slots', (req, res) => {
   const workDayEnd   = new Date(year, month, day, parsedEndHour, 0, 0);
 
   // 6) Trier les slots occupés par ordre de début
+  //    ET ignorer ceux qui ont start == end (durée zéro)
   const sortedOccupiedSlots = occupiedSlots
     .map(slot => ({
       start: new Date(slot.start),
       end:   new Date(slot.end)
     }))
+    .filter(slot => slot.start < slot.end)  // <-- on ignore les slots vides
     .sort((a, b) => a.start - b.start);
 
   // 7) Trouver les créneaux libres
