@@ -1,6 +1,5 @@
 const express = require('express');
 const app = express();
-const axios = require('axios');
 const port = process.env.PORT || 10000;
 
 // Middleware pour parser le JSON dans les requêtes
@@ -8,37 +7,76 @@ app.use(express.json());
 
 // Route pour identifier les créneaux libres
 app.post('/occupied-slots', (req, res) => {
-  const { value: occupiedSlots } = req.body;
+  // On récupère :
+  //  - un tableau "value" de slots occupés (optionnel si on fournit requested_datetime)
+  //  - un "requested_datetime" (optionnel si on fournit déjà des slots)
+  //  - la plage horaire (startHour / endHour) (optionnelle, sinon on la calcule)
+  let { value: occupiedSlots, requested_datetime, startHour, endHour } = req.body;
 
-  // startHour et endHour peuvent être envoyés en string,
-  // donc on les parse pour éviter l'erreur "must be numbers".
-  let { startHour, endHour } = req.body;
+  // On convertit (si présents) startHour / endHour en nombre
+  let parsedStartHour = parseInt(startHour, 10);
+  let parsedEndHour   = parseInt(endHour, 10);
 
-  // Vérifier qu'on a au moins des slots
-  if (!occupiedSlots || occupiedSlots.length === 0) {
+  // Cas 1 : l'utilisateur fournit "requested_datetime"
+  if (requested_datetime) {
+    // On parse la date demandée
+    const requestedDateObj = new Date(requested_datetime + 'Z');
+    if (isNaN(requestedDateObj.getTime())) {
+      return res.status(400).json({
+        message: "Invalid input, 'requested_datetime' must be une date ISO valide (ex: 2025-02-21T19:00:00)."
+      });
+    }
+
+    // Si l'utilisateur n'a pas spécifié startHour/endHour,
+    // on les calcule automatiquement : (heure demandée) → (heure demandée +1)
+    if (isNaN(parsedStartHour)) {
+      parsedStartHour = requestedDateObj.getUTCHours(); // ex. 19 si 19h en UTC
+    }
+    if (isNaN(parsedEndHour)) {
+      parsedEndHour = parsedStartHour + 1; // par défaut, +1 heure
+    }
+
+    // Si "value" (occupiedSlots) est vide ou inexistant,
+    // on crée un faux slot (même heure début/fin) juste pour récupérer la date
+    if (!occupiedSlots || occupiedSlots.length === 0) {
+      occupiedSlots = [{
+        start: requestedDateObj.toISOString(),
+        end:   requestedDateObj.toISOString()
+      }];
+    }
+
+  // Cas 2 : pas de requested_datetime => on attend un vrai tableau "value"
+  } else {
+    // On vérifie que startHour / endHour sont bien valides
+    if (isNaN(parsedStartHour) || isNaN(parsedEndHour)) {
+      return res.status(400).json({
+        message: "Invalid input, 'startHour' et 'endHour' doivent être fournis ou alors 'requested_datetime'."
+      });
+    }
+    if (!occupiedSlots || occupiedSlots.length === 0) {
+      return res.status(400).json({
+        message: "Invalid input, 'value' (slots) ne peut pas être vide si pas de 'requested_datetime'."
+      });
+    }
+  }
+
+  // À ce stade, on a forcément un tableau occupiedSlots et des heures start/end
+  startHour = parsedStartHour;
+  endHour   = parsedEndHour;
+
+  // Récupérer l'année, mois, jour depuis le 1er slot
+  const firstSlot = new Date(occupiedSlots[0].start);
+  if (isNaN(firstSlot.getTime())) {
     return res.status(400).json({
-      message: "Invalid input, 'value' is required and should contain slots."
+      message: "Invalid date dans 'value[0].start' ou 'requested_datetime'."
     });
   }
 
-  // Convertir startHour/endHour en nombre (si c'est déjà un nombre, parseInt marche quand même)
-  startHour = parseInt(startHour, 10);
-  endHour   = parseInt(endHour, 10);
-
-  // Vérifier qu'ils sont valides
-  if (isNaN(startHour) || isNaN(endHour)) {
-    return res.status(400).json({
-      message: "Invalid input, 'startHour' and 'endHour' must be valid integers."
-    });
-  }
-
-  // Récupérer la date (année/mois/jour) du premier slot
-  const firstSlot = new Date(occupiedSlots[0].start); // ex. "2025-02-21T19:00:00Z"
   const year  = firstSlot.getFullYear();
   const month = firstSlot.getMonth();
   const day   = firstSlot.getDate();
 
-  // Définir la plage de travail dynamique
+  // Créer la plage de travail [startHour → endHour] pour ce jour
   const workDayStart = new Date(year, month, day, startHour, 0, 0);
   const workDayEnd   = new Date(year, month, day, endHour, 0, 0);
 
@@ -46,7 +84,7 @@ app.post('/occupied-slots', (req, res) => {
   const sortedOccupiedSlots = occupiedSlots
     .map(slot => ({
       start: new Date(slot.start),
-      end: new Date(slot.end)
+      end:   new Date(slot.end)
     }))
     .sort((a, b) => a.start - b.start);
 
@@ -58,7 +96,7 @@ app.post('/occupied-slots', (req, res) => {
     if (currentTime < slot.start) {
       freeSlots.push({
         start: currentTime.toISOString(),
-        end: slot.start.toISOString()
+        end:   slot.start.toISOString()
       });
     }
     if (slot.end > currentTime) {
@@ -70,7 +108,7 @@ app.post('/occupied-slots', (req, res) => {
   if (currentTime < workDayEnd) {
     freeSlots.push({
       start: currentTime.toISOString(),
-      end: workDayEnd.toISOString()
+      end:   workDayEnd.toISOString()
     });
   }
 
@@ -110,7 +148,7 @@ app.post('/extend-slots', (req, res) => {
   let requestedDate = new Date(`${requested_datetime}Z`);
   if (isNaN(requestedDate.getTime())) {
     return res.status(400).json({
-      message: "Invalid input, 'requested_datetime' must be a valid ISO date without timezone."
+      message: "Invalid input, 'requested_datetime' must be a valid ISO date (ex: 2025-02-21T19:00:00)."
     });
   }
 
@@ -118,7 +156,7 @@ app.post('/extend-slots', (req, res) => {
   requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
 
   // Si J+1 tombe un samedi ou dimanche, avancer jusqu'au lundi
-  while (requestedDate.getUTCDay() === 6 || requestedDate.getUTCDay() === 0) {
+  while (requestedDate.getUTCHours() === 6 || requestedDate.getUTCHours() === 0) {
     requestedDate.setUTCDate(requestedDate.getUTCDate() + 1);
   }
 
@@ -147,7 +185,7 @@ app.post('/answer', (req, res) => {
     const startDate = new Date(slot.start);
     const endDate   = new Date(slot.end);
 
-    // Convertir de UTC à UTC+1 (1 h)
+    // Convertir de UTC à UTC+1 (1h)
     const startUTCPlus1 = new Date(startDate.getTime() + 60 * 60 * 1000);
     const endUTCPlus1   = new Date(endDate.getTime() + 60 * 60 * 1000);
 
