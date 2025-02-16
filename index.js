@@ -4,6 +4,11 @@ const port = process.env.PORT || 10000;
 
 app.use(express.json());
 
+// ...
+const start = `${year}-${month}-${day}T08:00:00Z`;
+const end   = `${year}-${month}-${day}T19:00:00Z`;
+// ...
+
 // Route pour identifier les créneaux libres
 app.post('/occupied-slots', (req, res) => {
   let { value: occupiedSlots, requested_datetime, startHour, endHour } = req.body;
