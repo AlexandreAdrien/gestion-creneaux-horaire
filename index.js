@@ -25,10 +25,10 @@ app.post('/occupied-slots', (req, res) => {
 
   // 2) Par défaut, la plage est 8h–19h si l'utilisateur ne l'a pas précisée
   if (isNaN(parsedStartHour)) {
-    parsedStartHour = 8;
+    parsedStartHour = 7;
   }
   if (isNaN(parsedEndHour)) {
-    parsedEndHour = 19;
+    parsedEndHour = 18;
   }
 
   // 3) Si on n'a pas de 'value' non vide,
